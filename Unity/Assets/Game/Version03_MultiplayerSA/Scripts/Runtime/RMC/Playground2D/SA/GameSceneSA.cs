@@ -17,8 +17,14 @@ namespace RMC.Playground2D.SA
     ///     3.  The <see cref="GameSceneSA"/> updates the <see cref="WorldUI"/>.
     /// 
     /// </summary>
-    public class GameSceneSA : MonoBehaviour
+    public class GameSceneSA : NetworkBehaviour
     {
+
+        // Thêm ở đầu class GameSceneSA
+        private NetworkVariable<int> _totalScore = new NetworkVariable<int>(
+            readPerm: NetworkVariableReadPermission.Everyone,
+            writePerm: NetworkVariableWritePermission.Server);
+
         //  Fields ----------------------------------------
         private PlayerSA _localPlayer;
 
@@ -37,14 +43,21 @@ namespace RMC.Playground2D.SA
             // Set manageable size to help if/when
             // spawning multiple builds for testing
             Screen.SetResolution(960, 540, FullScreenMode.Windowed);
-            
+
             // Mimic event to refresh UI
             PlayerScore_OnValueChanged(0, 0);
-            
+
             NetworkManager.Singleton.OnConnectionEvent += NetworkManager_OnConnectionEvent;
+            _totalScore.OnValueChanged += (_, _) =>
+            {
+                if (_localPlayer != null)
+                {
+                    PlayerScore_OnValueChanged(_localPlayer.PlayerScore.Value, _localPlayer.PlayerScore.Value);
+                }
+            };
         }
-        
-        
+
+
         protected void OnDestroy()
         {
             if (NetworkManager.Singleton != null)
@@ -68,7 +81,7 @@ namespace RMC.Playground2D.SA
             crateNetworkObject.Despawn(true);
             _crateInstance = null;
         }
-        
+
         private void SetPlayerName(NetworkObject networkObject, int localPlayerIndex)
         {
             bool isHost = networkObject.IsOwnedByServer;
@@ -77,36 +90,48 @@ namespace RMC.Playground2D.SA
             PlayerSA player = networkObject.GetComponent<PlayerSA>();
             player.PlayerName.Value = playerName;
         }
-        
+
         private void SetPlayerPosition(NetworkObject networkObject, int localPlayerIndex)
         {
             GameObject spawnPoint = _world.SpawnPoints.GetPlayerSpawnPointByIndex(localPlayerIndex);
             PlayerSA eventPlayer = networkObject.GetComponent<PlayerSA>();
             eventPlayer.Teleport(spawnPoint.transform.position);
         }
-        
+
 
         //  Event Handlers --------------------------------
         private void PlayerScore_OnValueChanged(int oldValue, int newValue)
         {
-            _world.WorldUI.ScoreText.text = $"{this.GetType().Name}\nScore : {newValue:000}";
+            int totalScore = _totalScore.Value;
+            _world.WorldUI.ScoreText.text = $"{this.GetType().Name}\nTotal: {totalScore:000}";
         }
-        
-        
-        private void NetworkManager_OnConnectionEvent(  NetworkManager networkManager, 
+
+        public void AddToTotalScore(int value)
+        {
+            _totalScore.Value += value;
+
+            // Force update UI on local host client
+            if (_localPlayer != null && _localPlayer.IsLocalPlayer)
+            {
+                PlayerScore_OnValueChanged(_localPlayer.PlayerScore.Value - value, _localPlayer.PlayerScore.Value);
+            }
+        }
+
+
+        private void NetworkManager_OnConnectionEvent(NetworkManager networkManager,
             ConnectionEventData connectionEventData)
         {
-            
+
             // Is the code running on the server and is the connection relates to the server's local client
             // This is useful to know if the server is the one that connected or disconnected
             bool isConnectionClientMeAsServer = NetworkManager.Singleton.IsServer &&
                                           NetworkManager.Singleton.LocalClientId == connectionEventData.ClientId;
-                
-            
+
+
             if (connectionEventData.EventType == ConnectionEvent.ClientConnected)
             {
                 NetworkObject eventNetworkObject;
-                
+
                 // Host sets position and name
                 if (NetworkManager.Singleton.IsServer)
                 {
@@ -125,6 +150,12 @@ namespace RMC.Playground2D.SA
                 {
                     _localPlayer = eventNetworkObject.GetComponent<PlayerSA>();
                     _localPlayer.PlayerScore.OnValueChanged += PlayerScore_OnValueChanged;
+                    _totalScore.OnValueChanged += (_, _) =>
+                    {
+                        PlayerScore_OnValueChanged(_localPlayer.PlayerScore.Value, _localPlayer.PlayerScore.Value);
+                    };
+
+                    PlayerScore_OnValueChanged(_localPlayer.PlayerScore.Value, _localPlayer.PlayerScore.Value);
                 }
 
                 //Create crate once per session.
@@ -133,18 +164,18 @@ namespace RMC.Playground2D.SA
                     GameObject crateSpawnPoint = _world.SpawnPoints.GetCrateSpawnPoint();
                     GameObject crateGameObject = Instantiate(_crateNetworkPrefab.gameObject,
                         crateSpawnPoint.transform.position, Quaternion.identity);
-                    
-                    if(_crateInstance != null)
+
+                    if (_crateInstance != null)
                     {
                         DestroyCrate();
                     }
-                    
+
                     _crateInstance = crateGameObject.GetComponent<Crate>();
                     NetworkObject crateNetworkObject = _crateInstance.GetComponent<NetworkObject>();
                     crateNetworkObject.SpawnWithOwnership(NetworkManager.Singleton.LocalClientId, true);
                     crateNetworkObject.DontDestroyWithOwner = true;
                 }
-      
+
             }
             else if (connectionEventData.EventType == ConnectionEvent.ClientDisconnected)
             {
@@ -152,7 +183,7 @@ namespace RMC.Playground2D.SA
                 {
                     DestroyCrate();
                 }
-                
+
                 if (_localPlayer != null)
                 {
                     // Unsubscribe to player events

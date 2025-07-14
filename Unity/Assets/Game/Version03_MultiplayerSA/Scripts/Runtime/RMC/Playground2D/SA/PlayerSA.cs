@@ -4,6 +4,7 @@ using Unity.Netcode;
 using UnityEngine;
 using Unity.Collections;
 using Unity.Netcode.Components;
+using System.Collections;
 
 namespace RMC.Playground2D.SA
 {
@@ -17,7 +18,7 @@ namespace RMC.Playground2D.SA
 
 		//  Constants -------------------------------------
 		private const float DeltaPositionIsRunningThreshold = 0.03f;
-
+		private bool _canScore = false;
 
 		//  Fields ----------------------------------------
 		[SerializeField]
@@ -56,6 +57,12 @@ namespace RMC.Playground2D.SA
 		private readonly float _interpolatedSmoothTime = .001f;
 
 
+		private IEnumerator StartScoringDelay()
+		{
+			yield return new WaitForSeconds(0.5f); // Chờ 0.5s
+			_canScore = true;
+		}
+
 		//  Unity Methods ---------------------------------
 		public override void OnNetworkSpawn()
 		{
@@ -73,6 +80,8 @@ namespace RMC.Playground2D.SA
 			{
 				PlayerScore.Value = 0;
 			}
+
+			StartCoroutine(StartScoringDelay());
 		}
 
 
@@ -130,6 +139,21 @@ namespace RMC.Playground2D.SA
 			PlayerScore.Value++;
 		}
 
+		[ServerRpc(RequireOwnership = false)]
+		private void AddScoreServerRpc()
+		{
+			PlayerScore.Value++;
+
+			// Cộng vào tổng điểm
+			GameSceneSA gameScene = FindObjectOfType<GameSceneSA>();
+			if (gameScene != null)
+			{
+				gameScene.AddToTotalScore(1);
+			}
+		}
+
+
+
 
 		private void RespondToMoveRequest(Vector2 deltaPosition)
 		{
@@ -178,10 +202,12 @@ namespace RMC.Playground2D.SA
 
 		public void OnCollisionEnter2D(Collision2D collision2D)
 		{
+			if (!_canScore) return;
+
 			Crate crate = collision2D.gameObject.GetComponent<Crate>();
 			if (crate != null)
 			{
-				AddScoreClientRpc();// Gửi yêu cầu lên server để tăng điểm
+				AddScoreServerRpc();// Gửi yêu cầu lên server để tăng điểm
 			}
 		}
 	}
